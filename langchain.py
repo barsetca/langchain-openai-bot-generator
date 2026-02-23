@@ -122,16 +122,19 @@ def build_chains():
         ("system", """Ты эксперт по подбору инструментов для Python-проектов.
 На основе анализа задания определи:
 
-БИБЛИОТЕКИ:
-- список Python-библиотек (pip install) для реализации. ОБЯЗАТЕЛЬНО включи: aiogram, openai, python-dotenv
+БИБЛИОТЕКИ: (строка для pip install, через пробел)
+Обязательно: aiogram openai python-dotenv aiohttp
+Если нужна БД: sqlalchemy
+Если нужен FSM с Redis: redis (но в коде Redis опционален, fallback на MemoryStorage)
+Если валидация: pydantic
+Если изображения: Pillow
+Формат: БИБЛИОТЕКИ: aiogram openai python-dotenv aiohttp sqlalchemy redis
 
-ВНЕШНИЕ_ИНСТРУМЕНТЫ:
-- API, сервисы, которые понадобятся
+ВНЕШНИЕ_ИНСТРУМЕНТЫ: API, сервисы
 
-ТЕХНОЛОГИИ:
-- какие технологии используем (очереди, кэш, БД и т.д.)
+ТЕХНОЛОГИИ: очереди, кэш, БД
 
-ВАЖНО: использовать именно библиотеку openai (не langchain-openai)."""),
+ВАЖНО: openai (не langchain-openai)."""),
         ("human", "Анализ: {analysis}\n\nЗадание: {task}"),
     ])
     tools_chain = tools_prompt | llm | StrOutputParser()
@@ -157,17 +160,17 @@ def build_chains():
 
     # 4. code_chain
     code_prompt = ChatPromptTemplate.from_messages([
-        ("system", """Ты опытный Python-разработчик. Сгенерируй полный рабочий код Telegram-бота.
+        ("system", """Ты опытный Python-разработчик. Сгенерируй ПОЛНЫЙ рабочий код Telegram-бота. Код должен быть завершённым — все обработчики и функции реализованы целиком.
 
-ТРЕБОВАНИЯ:
-1. aiogram 3.x (Bot, Dispatcher, Router, CommandStart, Message)
-2. Все хендлеры - async def
-3. Токен: os.getenv("BOT_TOKEN")
-4. Использовать библиотеку openai напрямую (не langchain-openai)
-5. Без заглушек - код должен запускаться
-6. Добавить logging
-7. Переменные из .env (те же для всех ботов): BOT_TOKEN, OPENAI_API_KEY, OPENAI_MODEL, OPENAI_TEMPERATURE, OPENAI_MAX_TOKENS
-8. Используй load_dotenv() и os.getenv() для чтения переменных
+ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
+1. aiogram 3.x (Bot, Dispatcher, Router, CommandStart, Message). Все хендлеры - async def.
+2. Токен: os.getenv("BOT_TOKEN"). load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+3. Библиотека openai напрямую (не langchain-openai).
+4. В конце файла ОБЯЗАТЕЛЬНО: async def main(): ... и if __name__ == "__main__": asyncio.run(main())
+5. Если используется FSM и Redis — Redis ОПЦИОНАЛЕН. Важно: RedisStorage требует redis.asyncio.Redis (async), НЕ redis.Redis (sync). Пример: from redis.asyncio import Redis; r = Redis.from_url(...); await r.ping(). При ошибке — MemoryStorage.
+6. Pydantic: используй ТОЛЬКО @field_validator (Pydantic v2), НЕ @validator.
+7. Добавить logging. Base.metadata.create_all(engine) для SQLAlchemy — вызвать перед start_polling.
+8. Код целиком — без обрезанных хендлеров, без "...", все функции завершены.
 
 Верни только код Python, без markdown-оболочки (```python и т.д.)."""),
         ("human", """Структура: {structure}
@@ -184,12 +187,14 @@ def build_chains():
 
 Проверь:
 1. Нет ли синтаксических ошибок
-2. Корректная структура запуска (if __name__ == "__main__", asyncio.run(main()))
-3. Корректные импорты (aiogram 3.x, openai)
-4. Используется BOT_TOKEN из getenv
-5. Все хендлеры async def
+2. ОБЯЗАТЕЛЬНО: if __name__ == "__main__": asyncio.run(main()) в конце
+3. ОБЯЗАТЕЛЬНО: async def main() с dp.start_polling(bot)
+4. Redis: при использовании — try/except с fallback на MemoryStorage
+5. Pydantic: @field_validator (v2), НЕ @validator
+6. Импорты: aiogram 3.x, openai
+7. BOT_TOKEN из getenv, хендлеры async def
 
-Верни: ОК если всё корректно, или список ошибок для исправления."""),
+Верни: ОК если всё корректно, или список критичных ошибок."""),
         ("human", "{code}"),
     ])
     review_chain = review_prompt | llm | StrOutputParser()
@@ -226,7 +231,30 @@ def validate_python_syntax(code: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def run_generation(filename: str, task: str) -> str:
+IMPORT_TO_PACKAGE = {
+    "redis": "redis",
+    "sqlalchemy": "sqlalchemy",
+    "pydantic": "pydantic",
+    "PIL": "Pillow",
+    "Pillow": "Pillow",
+    "aiohttp": "aiohttp",
+}
+
+
+def get_required_packages(code: str, tools_text: str) -> list[str]:
+    """Определяет pip-пакеты по импортам в коде."""
+    seen = set()
+    result = []
+    for line in code.split("\n"):
+        if "import " in line or "from " in line:
+            for name, pkg in IMPORT_TO_PACKAGE.items():
+                if name in line and pkg not in seen:
+                    seen.add(pkg)
+                    result.append(pkg)
+    return result
+
+
+def run_generation(filename: str, task: str) -> tuple[str, str]:
     """Запуск полной генерации бота."""
     chains = build_chains()
     logger.info("Старт генерации: analysis_chain")
@@ -257,11 +285,10 @@ def run_generation(filename: str, task: str) -> str:
     valid, syntax_err = validate_python_syntax(code)
     if not valid:
         logger.warning("Синтаксическая ошибка: %s", syntax_err)
-        # Пытаемся сохранить даже с ошибками для отладки
     if "ОК" not in review.upper() and "OK" not in review:
         logger.warning("Review рекомендует проверку: %s", review[:200])
 
-    return code
+    return code, tools
 
 
 def main():
@@ -288,11 +315,39 @@ def main():
 
     print("\nГенерация запущена...")
     try:
-        code = run_generation(filename, task)
-        output_path = Path(filename)
+        code, tools = run_generation(filename, task)
+        bots_dir = Path(__file__).resolve().parent / "bots"
+        bots_dir.mkdir(exist_ok=True)
+        output_path = bots_dir / filename
         output_path.write_text(code, encoding="utf-8")
         print(f"\nГотово! Бот сохранён в: {output_path.absolute()}")
-        print(f"Запуск: python3 {filename}")
+        print(f"Запуск: python3 bots/{filename}")
+        # Инструкции перед запуском
+        extra = get_required_packages(code, tools)
+        base_pkgs = {"aiogram", "openai", "python-dotenv", "aiohttp"}
+        extra = [p for p in extra if p.lower() not in base_pkgs]
+        if extra or "redis" in code.lower() or "sqlalchemy" in code.lower():
+            print("\n" + "=" * 60)
+            print("ПЕРЕД ЗАПУСКОМ:")
+            print("=" * 60)
+            all_deps = list(dict.fromkeys(extra))
+            dep_checks = [
+                ("import redis" in code or "from redis" in code, "redis"),
+                ("sqlalchemy" in code, "sqlalchemy"),
+                ("pydantic" in code, "pydantic"),
+                ("PIL" in code or "Pillow" in code or "from PIL" in code, "Pillow"),
+            ]
+            for cond, pkg in dep_checks:
+                if cond and pkg.lower() not in [d.lower() for d in all_deps]:
+                    all_deps.append(pkg)
+            if all_deps:
+                print("1. Установите зависимости:")
+                print(f"   pip install {' '.join(all_deps)}")
+            if "redis" in code.lower():
+                print("2. Redis опционален: при недоступности используется MemoryStorage.")
+            if "create_engine" in code or "sqlalchemy" in code:
+                print("3. SQLite: БД создаётся автоматически при первом запуске.")
+            print("=" * 60)
     except Exception as e:
         logger.exception("Ошибка генерации: %s", e)
         print(f"\nОшибка: {e}")

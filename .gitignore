@@ -3,3 +3,8 @@
 __pycache__/
 *.pyc
 *.pyo
+memory/
+docs/
+bots/docs/
+bots/
+db.sqlite3
