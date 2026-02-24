@@ -13,7 +13,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 
-from tools import get_all_tools
+try:
+    from .tools import get_all_tools
+except ImportError:
+    from tools import get_all_tools
 
 # Загрузка .env из корня проекта
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")

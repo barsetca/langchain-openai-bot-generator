@@ -77,13 +77,55 @@ def get_weather(city: str) -> str:
         return f"Ошибка при получении погоды: {e}"
 
 
+# Русские названия и варианты написания → id в CoinGecko API
+RUSSIAN_CRYPTO_ALIASES = {
+    "биткоин": "bitcoin",
+    "биткойн": "bitcoin",
+    "биткейн": "bitcoin",
+    "эфириум": "ethereum",
+    "этериум": "ethereum",
+    "эфир": "ethereum",
+    "рипл": "ripple",
+    "ксрп": "ripple",
+    "кардано": "cardano",
+    "ада": "cardano",
+    "солана": "solana",
+    "сол": "solana",
+    "догикоин": "dogecoin",
+    "доги": "dogecoin",
+    "доге": "dogecoin",
+    "полкадо": "polkadot",
+    "дот": "polkadot",
+    "аваланч": "avalanche-2",
+    "авакс": "avalanche-2",
+    "шiba": "shiba-inu",
+    "шиба": "shiba-inu",
+    "лайткоин": "litecoin",
+    "лайткойн": "litecoin",
+    "бинанс коин": "binancecoin",
+    "bnb": "binancecoin",
+    "тейзер": "tether",
+    "тезер": "tether",
+    "usdt": "tether",
+    "usdc": "usd-coin",
+    "трон": "tron",
+    "chainlink": "chainlink",
+    "линк": "chainlink",
+    "uni": "uniswap",
+    "юнисвап": "uniswap",
+    "матчик": "matic-network",
+    "полигон": "matic-network",
+}
+
 @tool
 def get_crypto_price(coin: str, currency: str = "usd") -> str:
     """
     Узнать текущий курс криптовалюты (например bitcoin, ethereum).
-    coin: id монеты (bitcoin, ethereum, ...), currency: usd, eur, rub и т.д.
+    coin: id монеты или название на русском (биткоин, эфириум, ...), currency: usd, eur, rub и т.д.
     """
-    coin_id = coin.lower().strip()
+    raw = coin.strip()
+    coin_id = raw.lower()
+    coin_id = RUSSIAN_CRYPTO_ALIASES.get(coin_id, coin_id)
     curr = currency.lower().strip()
     url = "https://api.coingecko.com/api/v3/simple/price"
     params = {"ids": coin_id, "vs_currencies": curr}
@@ -92,11 +134,11 @@ def get_crypto_price(coin: str, currency: str = "usd") -> str:
         r.raise_for_status()
         data = r.json()
         if coin_id not in data:
-            return f"Монета '{coin}' не найдена. Попробуйте: bitcoin, ethereum, etc."
+            return f"Монета '{raw}' не найдена. Попробуйте: bitcoin, ethereum, или название на русском (биткоин, эфириум)."
         price = data[coin_id].get(curr)
         if price is None:
-            return f"Валюта '{currency}' не поддерживается для {coin}."
-        return f"{coin}: {price} {curr.upper()}"
+            return f"Валюта '{currency}' не поддерживается для {raw}."
+        return f"{raw}: {price} {curr.upper()}"
     except Exception as e:
         logger.exception("CoinGecko API error")
         return f"Ошибка при получении курса: {e}"

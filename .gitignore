@@ -8,3 +8,5 @@ docs/
 bots/docs/
 bots/
 db.sqlite3
+agent/output/
+agent/memory.json
